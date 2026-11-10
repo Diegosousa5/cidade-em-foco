@@ -148,6 +148,28 @@ h1 span {
     background: #bd5a87;
 }
 
+.user-location-icon {
+    border: 0;
+    background: transparent;
+}
+
+.user-location-marker {
+    display: block;
+    width: 22px;
+    height: 22px;
+    border: 3px solid #fff;
+    border-radius: 50%;
+    background: #4285f4;
+    box-shadow: 0 0 0 5px rgb(66 133 244 / 18%), 0 1px 5px rgb(0 0 0 / 45%);
+}
+
+.user-location-message {
+    margin: -8px 0 12px;
+    color: #64736e;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
 .occurrence-popup {
     min-width: 190px;
     color: #173a34;
