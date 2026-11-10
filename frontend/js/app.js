@@ -45,6 +45,7 @@ const saveEditButton = document.querySelector("#save-edit-button");
 const closeEditButton = document.querySelector("#close-edit-button");
 const cancelEditButton = document.querySelector("#cancel-edit-button");
 const mainMapMessage = document.querySelector("#main-map-message");
+const userLocationMessage = document.querySelector("#user-location-message");
 const mainMapLocationButton = document.querySelector("#main-map-location-button");
 const nearbySearchButton = document.querySelector("#nearby-search-button");
 const returnAreaButton = document.querySelector("#return-area-button");
@@ -55,6 +56,10 @@ let ocorrenciaEmEdicaoId = null;
 let mapaPrincipal;
 let camadaMarcadores;
 let camadaBuscaProxima;
+let camadaLocalizacaoUsuario;
+let marcadorLocalizacaoUsuario;
+let circuloPrecisaoLocalizacaoUsuario;
+let localizacaoUsuarioRecebida = false;
 let mapaPrincipalInteragido = false;
 let modoVisualizacao = "area";
 let centroBuscaProxima = null;
@@ -88,6 +93,24 @@ function showMessage(element, message, type = "") {
     element.className = `message${type ? ` message--${type}` : ""}`;
 }
 
+function mostrarMensagemLocalizacao(message = "") {
+    userLocationMessage.textContent = message;
+    userLocationMessage.hidden = !message;
+}
+
+function explicarErroGeolocalizacao(error) {
+    if (error.code === error.PERMISSION_DENIED) {
+        return "A localização foi negada. O mapa continua disponível sem o marcador da sua posição.";
+    }
+    if (error.code === error.POSITION_UNAVAILABLE) {
+        return "Sua localização está indisponível no momento. O mapa continua disponível.";
+    }
+    if (error.code === error.TIMEOUT) {
+        return "A localização está demorando para responder. O mapa continua disponível.";
+    }
+    return "Não foi possível obter sua localização. O mapa continua disponível.";
+}
+
 function criarMapaLeaflet(containerId, center, zoom) {
     const map = window.L.map(containerId).setView(center, zoom);
 
@@ -112,6 +135,92 @@ function criarIconeOcorrencia(categoria) {
         iconAnchor: [9, 25],
         popupAnchor: [0, -25]
     });
+}
+
+function atualizarMarcadorLocalizacaoUsuario(position) {
+    const latitude = position.coords.latitude;
+    const longitude = position.coords.longitude;
+    const precisao = position.coords.accuracy;
+
+    if (
+        !Number.isFinite(latitude)
+        || latitude < -90
+        || latitude > 90
+        || !Number.isFinite(longitude)
+        || longitude < -180
+        || longitude > 180
+    ) {
+        mostrarMensagemLocalizacao("A localização recebida é inválida. O mapa continua disponível.");
+        return null;
+    }
+
+    const coordenadas = [latitude, longitude];
+
+    if (Number.isFinite(precisao) && precisao > 0) {
+        if (!circuloPrecisaoLocalizacaoUsuario) {
+            circuloPrecisaoLocalizacaoUsuario = window.L.circle(coordenadas, {
+                radius: precisao,
+                color: "#4285f4",
+                weight: 1,
+                fillColor: "#4285f4",
+                fillOpacity: 0.14,
+                interactive: false
+            }).addTo(camadaLocalizacaoUsuario);
+        } else {
+            circuloPrecisaoLocalizacaoUsuario
+                .setLatLng(coordenadas)
+                .setRadius(precisao);
+        }
+    } else if (circuloPrecisaoLocalizacaoUsuario) {
+        camadaLocalizacaoUsuario.removeLayer(circuloPrecisaoLocalizacaoUsuario);
+        circuloPrecisaoLocalizacaoUsuario = null;
+    }
+
+    if (!marcadorLocalizacaoUsuario) {
+        marcadorLocalizacaoUsuario = window.L.marker(coordenadas, {
+            icon: window.L.divIcon({
+                className: "user-location-icon",
+                html: '<span class="user-location-marker" aria-hidden="true"></span>',
+                iconSize: [22, 22],
+                iconAnchor: [11, 11]
+            }),
+            title: "Sua localização atual",
+            alt: "Sua localização atual",
+            keyboard: false,
+            zIndexOffset: 1000
+        }).addTo(camadaLocalizacaoUsuario);
+    } else {
+        marcadorLocalizacaoUsuario.setLatLng(coordenadas);
+    }
+
+    if (!localizacaoUsuarioRecebida) {
+        localizacaoUsuarioRecebida = true;
+        mapaPrincipal.setView(coordenadas, 14);
+    }
+
+    mostrarMensagemLocalizacao();
+    return coordenadas;
+}
+
+function iniciarRastreamentoLocalizacaoUsuario() {
+    if (!navigator.geolocation) {
+        mostrarMensagemLocalizacao(
+            "Este navegador não oferece geolocalização. O mapa continua disponível."
+        );
+        return;
+    }
+
+    navigator.geolocation.watchPosition(
+        atualizarMarcadorLocalizacaoUsuario,
+        (error) => mostrarMensagemLocalizacao(
+            explicarErroGeolocalizacao(error)
+        ),
+        {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 60000
+        }
+    );
 }
 
 function criarPopupOcorrencia(ocorrencia) {
@@ -226,22 +335,26 @@ function atualizarCamadaBuscaProxima() {
 
 function mostrarOcorrenciasProximas() {
     if (!navigator.geolocation) {
-        showMessage(
-            mainMapMessage,
-            "Este navegador não oferece geolocalização. Habilite a permissão ou volte à área visível.",
-            "error"
+        mostrarMensagemLocalizacao(
+            "Este navegador não oferece geolocalização. O mapa continua disponível."
         );
         return;
     }
 
     nearbySearchButton.disabled = true;
-    showMessage(mainMapMessage, "Obtendo sua localização...");
+    mostrarMensagemLocalizacao("Obtendo sua localização...");
 
     navigator.geolocation.getCurrentPosition(
         (position) => {
+            const coordenadas = atualizarMarcadorLocalizacaoUsuario(position);
+            if (!coordenadas) {
+                nearbySearchButton.disabled = false;
+                return;
+            }
+
             centroBuscaProxima = {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude
+                latitude: coordenadas[0],
+                longitude: coordenadas[1]
             };
 
             modoVisualizacao = "proximas";
@@ -264,13 +377,7 @@ function mostrarOcorrenciasProximas() {
             nearbySearchButton.disabled = false;
         },
         (error) => {
-            const explanation = error.code === error.PERMISSION_DENIED
-                ? "A permissão de localização foi negada. Habilite-a nas configurações do site/navegador e tente novamente."
-                : error.code === error.POSITION_UNAVAILABLE
-                    ? "Sua localização atual não está disponível. Confira os serviços de localização do dispositivo."
-                    : "A busca da localização excedeu o tempo limite. Tente novamente.";
-
-            showMessage(mainMapMessage, explanation, "error");
+            mostrarMensagemLocalizacao(explicarErroGeolocalizacao(error));
             nearbySearchButton.disabled = false;
         },
         {
@@ -371,10 +478,8 @@ function focarMapaNaOcorrencia(ocorrencia, fallbackLocation) {
 
 function solicitarLocalizacaoPrincipal() {
     if (!navigator.geolocation) {
-        showMessage(
-            mainMapMessage,
-            "Geolocalização não está disponível neste navegador. O mapa mostra a região padrão.",
-            "error"
+        mostrarMensagemLocalizacao(
+            "Este navegador não oferece geolocalização. O mapa continua disponível."
         );
         return;
     }
@@ -383,27 +488,18 @@ function solicitarLocalizacaoPrincipal() {
 
     navigator.geolocation.getCurrentPosition(
         (position) => {
-            const center = [
-                position.coords.latitude,
-                position.coords.longitude
-            ];
+            const center = atualizarMarcadorLocalizacaoUsuario(position);
+            if (!center) {
+                mainMapLocationButton.disabled = false;
+                return;
+            }
 
             mapaPrincipal.setView(center, 14);
             mapaPrincipalInteragido = true;
             mainMapLocationButton.disabled = false;
         },
         (error) => {
-            const explanation = error.code === error.PERMISSION_DENIED
-                ? "Permissão de localização negada."
-                : error.code === error.POSITION_UNAVAILABLE
-                    ? "Sua localização atual não está disponível."
-                    : "A busca da localização excedeu o tempo limite.";
-
-            showMessage(
-                mainMapMessage,
-                `${explanation} O mapa mostra a região padrão.`,
-                "error"
-            );
+            mostrarMensagemLocalizacao(explicarErroGeolocalizacao(error));
 
             mainMapLocationButton.disabled = false;
         },
@@ -443,6 +539,7 @@ function inicializarMapaPrincipal() {
 
     camadaMarcadores = window.L.layerGroup().addTo(mapaPrincipal);
     camadaBuscaProxima = window.L.layerGroup().addTo(mapaPrincipal);
+    camadaLocalizacaoUsuario = window.L.layerGroup().addTo(mapaPrincipal);
 
     mapaPrincipal.on("dragstart zoomstart", () => {
         mapaPrincipalInteragido = true;
@@ -458,35 +555,7 @@ function inicializarMapaPrincipal() {
 
     requestAnimationFrame(() => mapaPrincipal.invalidateSize());
 
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                if (!mapaPrincipalInteragido) {
-                    mapaPrincipal.setView(
-                        [
-                            position.coords.latitude,
-                            position.coords.longitude
-                        ],
-                        14
-                    );
-                }
-            },
-            () => showMessage(
-                mainMapMessage,
-                "Localização atual indisponível; mostrando a região padrão. Use o botão para tentar novamente."
-            ),
-            {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 60000
-            }
-        );
-    } else {
-        showMessage(
-            mainMapMessage,
-            "Geolocalização não disponível; mostrando a região padrão."
-        );
-    }
+    iniciarRastreamentoLocalizacaoUsuario();
 
     agendarCarregamentoArea(0);
 }
